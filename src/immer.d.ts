@@ -81,3 +81,5 @@ export function setAutoFreeze(autoFreeze: boolean): void
  * By default done by using feature detection
  */
 export function setUseProxies(useProxies: boolean): void
+
+export const SHALLOW_COPY:Symbol

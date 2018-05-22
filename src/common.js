@@ -3,10 +3,17 @@ export const PROXY_STATE =
         ? Symbol("immer-proxy-state")
         : "__$immer_state"
 
+export const SHALLOW_COPY =
+    typeof Symbol !== "undefined"
+        ? Symbol("immer-shallow-copy")
+        : "__$immer_shallow_copy"
+
 export const RETURNED_AND_MODIFIED_ERROR =
     "An immer producer returned a new value *and* modified its draft. Either return a new value *or* modify the draft."
 
 function verifyMinified() {}
+
+const datePrototype = Object.getPrototypeOf(new Date())
 
 const inProduction =
     (typeof process !== "undefined" && process.env.NODE_ENV === "production") ||
@@ -44,7 +51,8 @@ export function isProxyable(value) {
     if (typeof value !== "object") return false
     if (Array.isArray(value)) return true
     const proto = Object.getPrototypeOf(value)
-    return proto === null || proto === Object.prototype
+    if (proto === datePrototype) return false
+    return true
 }
 
 export function freeze(value) {
@@ -66,6 +74,7 @@ const assign =
     }
 
 export function shallowCopy(value) {
+    if (value[SHALLOW_COPY]) return value[SHALLOW_COPY]()
     if (Array.isArray(value)) return value.slice()
     const target = value.__proto__ === undefined ? Object.create(null) : {}
     return assign(target, value)
