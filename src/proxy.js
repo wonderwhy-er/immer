@@ -7,6 +7,7 @@ import {
     isProxyable,
     isProxy,
     PROXY_STATE,
+    TRACKER,
     finalize,
     shallowCopy,
     RETURNED_AND_MODIFIED_ERROR,
@@ -40,6 +41,77 @@ each(objectTraps, (key, fn) => {
     }
 })
 
+function createInitialTracker(base) {
+    const tracker = {
+        map: new Map(),
+        add: (parent, child) => {
+            let childBase
+            if (isProxy(child)) {
+                childBase = child.base
+            } else {
+                childBase = child
+            }
+
+            //TODO may be optimized by implying that if child is proxy then parent is too?
+            let parentBase
+            if (isProxy(parent)) {
+                parentBase = chiparentld.base
+            } else {
+                parentBase = parent
+            }
+            if (!tracker.map.has(childBase)) {
+                const childInfo = {
+                    parents: new Map()
+                }
+                childInfo.parents.set(parentBase, parentBase)
+                tracker.map.set(childBase, childInfo)
+            } else {
+                tracker.map.get(childBase).parents.set(parentBase, parentBase)
+            }
+        },
+        remove: (parent, child) => {
+            let childBase
+            if (isProxy(child)) {
+                childBase = child.base
+            } else {
+                childBase = child
+            }
+            const childInfo = tracker.map.get(childBase)
+            childInfo.parents.remove(parent.base)
+            if (Array.from(childInfo.parents.entries()).length < 1) {
+                tracker.map.remove(childBase)
+            }
+        },
+        registerProxy(proxy) {
+            tracker[proxy.base].proxy = proxy
+        }
+    }
+
+    walk(base, (parent, child) => {
+        tracker.add(parent, child)
+    })
+
+    return tracker
+}
+
+function walk(parent, callback) {
+    if (Array.isArray(parent)) {
+        parent.forEach(child => {
+            if (typeof child === "object") {
+                callback(parent, child)
+                walk(child, callback)
+            }
+        })
+    } else if (typeof parent === "object") {
+        for (let child of Object.values(parent)) {
+            if (typeof child === "object") {
+                callback(parent, child)
+                walk(child, callback)
+            }
+        }
+    }
+}
+
 function createState(parent, base) {
     return {
         modified: false,
@@ -47,7 +119,10 @@ function createState(parent, base) {
         parent,
         base,
         copy: undefined,
-        proxies: {}
+        proxies: {},
+        objectTracker: parent
+            ? parent.objectTracker
+            : createInitialTracker(base)
     }
 }
 
@@ -80,6 +155,8 @@ function set(state, prop, value) {
             (has(state.proxies, prop) && state.proxies[prop] === value)
         )
             return true
+
+        state.objectTracker.add(state, value)
         markChanged(state)
     }
     state.copy[prop] = value
@@ -87,6 +164,7 @@ function set(state, prop, value) {
 }
 
 function deleteProperty(state, prop) {
+    state.objectTracker.remove(state, state.copy[prop])
     markChanged(state)
     delete state.copy[prop]
     return true
@@ -142,6 +220,7 @@ export function produceProxy(baseState, producer) {
         const rootProxy = createProxy(undefined, baseState)
         // execute the thunk
         const returnValue = producer.call(rootProxy, rootProxy)
+        //console.log("tracker", rootProxy[PROXY_STATE].objectTracker)
         // and finalize the modified proxy
         let result
         // check whether the draft was modified and/or a value was returned
@@ -157,8 +236,13 @@ export function produceProxy(baseState, producer) {
         } else {
             result = finalize(rootProxy)
         }
+
+        //TODO revoke only modified proxies removing them from tracker as well
         // revoke all proxies
-        each(proxies, (_, p) => p.revoke())
+        //each(proxies, (_, p) => p.revoke())
+
+        //result[TRACKER] = rootProxy[PROXY_STATE].objectTracker;
+
         return result
     } finally {
         proxies = previousProxies

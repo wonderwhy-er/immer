@@ -8,6 +8,9 @@ export const SHALLOW_COPY =
         ? Symbol("immer-shallow-copy")
         : "__$immer_shallow_copy"
 
+export const TRACKER =
+    typeof Symbol !== "undefined" ? Symbol("immer-tracker") : "__$immer_tracker"
+
 export const RETURNED_AND_MODIFIED_ERROR =
     "An immer producer returned a new value *and* modified its draft. Either return a new value *or* modify the draft."
 
@@ -99,10 +102,11 @@ export function finalize(base) {
         if (state.modified === true) {
             if (state.finalized === true) return state.copy
             state.finalized = true
-            return finalizeObject(
-                useProxies ? state.copy : (state.copy = shallowCopy(base)),
-                state
-            )
+            const copy = useProxies
+                ? state.copy
+                : (state.copy = shallowCopy(base))
+            copy[TRACKER] = state.objectTracker
+            return finalizeObject(copy, state)
         } else {
             return state.base
         }

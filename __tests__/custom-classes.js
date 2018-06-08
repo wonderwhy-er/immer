@@ -34,3 +34,40 @@ describe("support for custom classes", () => {
         expect(nextState[0].constructor.name).toBe("Task")
     })
 })
+
+describe("cyclic structure test", () => {
+    it("should understand cyclic structure", () => {
+        let start = {
+            items: [
+                {
+                    value: 1
+                },
+                {
+                    value: 2
+                },
+                {
+                    value: 3
+                },
+                {
+                    value: 4
+                }
+            ],
+            lists: []
+        }
+
+        start.lists.push([start.items[0]])
+        start.lists.push([start.items[1]])
+
+        let nextState = produce(start, draft => {
+            draft.items[0].value = 5
+        })
+
+        expect(nextState).not.toBe(start)
+        expect(start.items[0].value).toEqual(start.lists[0][0].value)
+        expect(start.lists[1]).toBe(nextState.lists[1])
+        expect(start.lists[0]).not.toBe(nextState.lists[0])
+
+        expect(nextState.items[0]).toBe(nextState.lists[0][0])
+        expect(nextState.items[0].value).toEqual(nextState.lists[0][0].value)
+    })
+})
