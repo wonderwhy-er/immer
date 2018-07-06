@@ -44,7 +44,7 @@ each(objectTraps, (key, fn) => {
 function createInitialTracker(base) {
     const tracker = {
         map: new Map(),
-        add: (parent, child) => {
+        add: (parent, key, child) => {
             let childBase
             if (isProxy(child)) {
                 childBase = child.base
@@ -52,21 +52,28 @@ function createInitialTracker(base) {
                 childBase = child
             }
 
-            //TODO may be optimized by implying that if child is proxy then parent is too?
             let parentBase
             if (isProxy(parent)) {
-                parentBase = chiparentld.base
+                parentBase = parent.base
             } else {
                 parentBase = parent
             }
-            if (!tracker.map.has(childBase)) {
-                const childInfo = {
+
+            let childInfo = tracker.map.get(childBase)
+            if (!childInfo) {
+                childInfo = {
                     parents: new Map()
                 }
-                childInfo.parents.set(parentBase, parentBase)
                 tracker.map.set(childBase, childInfo)
-            } else {
-                tracker.map.get(childBase).parents.set(parentBase, parentBase)
+            }
+
+            if (parentBase) {
+                let parentKeys = childInfo.parents.get(parentBase)
+                if (!parentKeys) {
+                    parentKeys = {}
+                    childInfo.parents.set(parentBase, parentKeys)
+                }
+                parentKeys[key] = key
             }
         },
         remove: (parent, child) => {
@@ -82,30 +89,44 @@ function createInitialTracker(base) {
                 tracker.map.remove(childBase)
             }
         },
-        registerProxy(proxy) {
-            tracker[proxy.base].proxy = proxy
+        registerStateAndProxy(state, proxy) {
+            const childInfo = tracker.map.get(state.base)
+            childInfo.proxy = proxy
+            childInfo.state = state
+        },
+        getProxy(base) {
+            return tracker.map.get(base).proxy
+        },
+        getState(base) {
+            return tracker.map.get(base).state
         }
     }
 
-    walk(base, (parent, child) => {
-        tracker.add(parent, child)
+    tracker.add(undefined, undefined, base)
+    walk(base, (parent, key, child) => {
+        tracker.add(parent, key, child)
     })
 
     return tracker
 }
 
+//TODO add objects on add hook
+//TODO remove objects when removed
+//TODO if object switched then remove and add
+//TODO register new proxies
+
 function walk(parent, callback) {
     if (Array.isArray(parent)) {
-        parent.forEach(child => {
+        parent.forEach((child, index) => {
             if (typeof child === "object") {
-                callback(parent, child)
+                callback(parent, index, child)
                 walk(child, callback)
             }
         })
     } else if (typeof parent === "object") {
-        for (let child of Object.values(parent)) {
+        for (let [key, child] of Object.entries(parent)) {
             if (typeof child === "object") {
-                callback(parent, child)
+                callback(parent, key, child)
                 walk(child, callback)
             }
         }
@@ -120,6 +141,7 @@ function createState(parent, base) {
         base,
         copy: undefined,
         proxies: {},
+        //TODO optimize? can we move this somewhere passing fake parent initially with createInitialTracker for example
         objectTracker: parent
             ? parent.objectTracker
             : createInitialTracker(base)
@@ -130,20 +152,44 @@ function source(state) {
     return state.modified === true ? state.copy : state.base
 }
 
+//TODO apperantly is inneficient as this gonna be visited multiple times for same base
+function proxyfyParents(tracker, base) {
+    const info = tracker.map.get(base)
+
+    for (let [parentBase, keys] of info.parents.entries()) {
+        const parentInfo = tracker.map.get(parentBase)
+        if (!parentInfo.proxy) {
+            proxyfyParents(tracker, parentBase)
+        }
+        Object.values(keys).forEach(key => parentInfo.proxy[key])
+    }
+}
+
+function switchToProxy(state, prop, value) {
+    const proxy =
+        state.objectTracker.getProxy(value) || createProxy(state, value)
+
+    proxyfyParents(state.objectTracker, value)
+    return proxy
+}
+
 function get(state, prop) {
     if (prop === PROXY_STATE) return state
     if (state.modified) {
         const value = state.copy[prop]
-        if (value === state.base[prop] && isProxyable(value))
+        if (value === state.base[prop] && isProxyable(value)) {
             // only create proxy if it is not yet a proxy, and not a new object
             // (new objects don't need proxying, they will be processed in finalize anyway)
-            return (state.copy[prop] = createProxy(state, value))
+            return (state.copy[prop] = switchToProxy(state, prop, value))
+        }
         return value
     } else {
         if (has(state.proxies, prop)) return state.proxies[prop]
         const value = state.base[prop]
-        if (!isProxy(value) && isProxyable(value))
-            return (state.proxies[prop] = createProxy(state, value))
+        if (!isProxy(value) && isProxyable(value)) {
+            return (state.proxies[prop] = switchToProxy(state, prop, value))
+        }
+
         return value
     }
 }
@@ -156,7 +202,7 @@ function set(state, prop, value) {
         )
             return true
 
-        state.objectTracker.add(state, value)
+        state.objectTracker.add(state, prop, value)
         markChanged(state)
     }
     state.copy[prop] = value
@@ -192,6 +238,9 @@ function markChanged(state) {
         state.copy = shallowCopy(state.base)
         // copy the proxies over the base-copy
         Object.assign(state.copy, state.proxies) // yup that works for arrays as well
+
+        //TODO mark all parent changes state.objectTracker.get(state.base).parents
+
         if (state.parent) markChanged(state.parent)
     }
 }
@@ -203,6 +252,7 @@ function createProxy(parentState, base) {
     const proxy = Array.isArray(base)
         ? Proxy.revocable([state], arrayTraps)
         : Proxy.revocable(state, objectTraps)
+    state.objectTracker.registerStateAndProxy(state, proxy.proxy)
     proxies.push(proxy)
     return proxy.proxy
 }
@@ -240,8 +290,6 @@ export function produceProxy(baseState, producer) {
         //TODO revoke only modified proxies removing them from tracker as well
         // revoke all proxies
         //each(proxies, (_, p) => p.revoke())
-
-        //result[TRACKER] = rootProxy[PROXY_STATE].objectTracker;
 
         return result
     } finally {
