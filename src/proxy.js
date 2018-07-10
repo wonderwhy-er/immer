@@ -113,7 +113,9 @@ function createInitialTracker(base) {
 //TODO add objects on add hook
 //TODO remove objects when removed
 //TODO if object switched then remove and add
-//TODO register new proxies
+//TODO it seems that tracker stays in finalized objects for non root, may be we need to remove tracker from non root elements?
+//TODO fix tests
+//TODO check performance
 
 function walk(parent, callback) {
     if (Array.isArray(parent)) {
@@ -153,8 +155,10 @@ function source(state) {
 }
 
 //TODO apperantly is inneficient as this gonna be visited multiple times for same base
-function proxyfyParents(tracker, base) {
+function proxyfyParents(tracker, base, parentException) {
     const info = tracker.map.get(base)
+
+    console.log("proxyfyParents", base)
 
     for (let [parentBase, keys] of info.parents.entries()) {
         const parentInfo = tracker.map.get(parentBase)
@@ -165,11 +169,14 @@ function proxyfyParents(tracker, base) {
     }
 }
 
-function switchToProxy(state, prop, value) {
+function switchToProxy(parentState, targetForProxy, prop, value) {
     const proxy =
-        state.objectTracker.getProxy(value) || createProxy(state, value)
+        parentState.objectTracker.getProxy(value) ||
+        createProxy(parentState, value)
 
-    proxyfyParents(state.objectTracker, value)
+    targetForProxy[prop] = proxy
+
+    proxyfyParents(parentState.objectTracker, value, parentState.base)
     return proxy
 }
 
@@ -180,14 +187,14 @@ function get(state, prop) {
         if (value === state.base[prop] && isProxyable(value)) {
             // only create proxy if it is not yet a proxy, and not a new object
             // (new objects don't need proxying, they will be processed in finalize anyway)
-            return (state.copy[prop] = switchToProxy(state, prop, value))
+            return switchToProxy(state, state.copy, prop, value)
         }
         return value
     } else {
         if (has(state.proxies, prop)) return state.proxies[prop]
         const value = state.base[prop]
         if (!isProxy(value) && isProxyable(value)) {
-            return (state.proxies[prop] = switchToProxy(state, prop, value))
+            return switchToProxy(state, state.proxies, prop, value)
         }
 
         return value
@@ -240,8 +247,11 @@ function markChanged(state) {
         Object.assign(state.copy, state.proxies) // yup that works for arrays as well
 
         //TODO mark all parent changes state.objectTracker.get(state.base).parents
-
-        if (state.parent) markChanged(state.parent)
+        for (let [parentBase, keys] of state.objectTracker.map
+            .get(state.base)
+            .parents.entries()) {
+            markChanged(state.objectTracker.getState(parentBase))
+        }
     }
 }
 

@@ -27,3 +27,4 @@ expect(() => nextState.all[2] === nextState.selected[0])
 
 expect(() => !!nextState[TRACKER])
 console.log(nextState[TRACKER])
+console.log(state, nextState)
