@@ -1,4 +1,4 @@
-export {setAutoFreeze, setUseProxies, SHALLOW_COPY, TRACKER} from "./common"
+export {setAutoFreeze, setUseProxies, SHALLOW_COPY, trackers} from "./common"
 
 import {isProxyable, getUseProxies} from "./common"
 import {produceProxy} from "./proxy"

@@ -7,11 +7,11 @@ import {
     isProxyable,
     isProxy,
     PROXY_STATE,
-    TRACKER,
     finalize,
     shallowCopy,
     RETURNED_AND_MODIFIED_ERROR,
-    each
+    each,
+    trackers
 } from "./common"
 
 let proxies = null
@@ -102,7 +102,6 @@ function createInitialTracker(base) {
         }
     }
 
-    tracker.add(undefined, undefined, base)
     walk(base, (parent, key, child) => {
         tracker.add(parent, key, child)
     })
@@ -136,7 +135,7 @@ function walk(parent, callback) {
 }
 
 function createState(parent, base) {
-    return {
+    const state = {
         modified: false,
         finalized: false,
         parent,
@@ -146,8 +145,14 @@ function createState(parent, base) {
         //TODO optimize? can we move this somewhere passing fake parent initially with createInitialTracker for example
         objectTracker: parent
             ? parent.objectTracker
-            : createInitialTracker(base)
+            : trackers.get(base) || createInitialTracker(base)
     }
+
+    if (!parent) {
+        state.objectTracker.add(undefined, undefined, base)
+    }
+
+    return state
 }
 
 function source(state) {
@@ -157,8 +162,6 @@ function source(state) {
 //TODO apperantly is inneficient as this gonna be visited multiple times for same base
 function proxyfyParents(tracker, base, parentException) {
     const info = tracker.map.get(base)
-
-    console.log("proxyfyParents", base)
 
     for (let [parentBase, keys] of info.parents.entries()) {
         const parentInfo = tracker.map.get(parentBase)

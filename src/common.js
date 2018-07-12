@@ -8,13 +8,12 @@ export const SHALLOW_COPY =
         ? Symbol("immer-shallow-copy")
         : "__$immer_shallow_copy"
 
-export const TRACKER =
-    typeof Symbol !== "undefined" ? Symbol("immer-tracker") : "__$immer_tracker"
-
 export const RETURNED_AND_MODIFIED_ERROR =
     "An immer producer returned a new value *and* modified its draft. Either return a new value *or* modify the draft."
 
 function verifyMinified() {}
+
+export const trackers = new WeakMap()
 
 const datePrototype = Object.getPrototypeOf(new Date())
 
@@ -99,15 +98,23 @@ export function has(thing, prop) {
 export function finalize(base) {
     if (isProxy(base)) {
         const state = base[PROXY_STATE]
+        const info =
+            state.objectTracker && state.objectTracker.map.get(state.base)
         if (state.modified === true) {
             if (state.finalized === true) return state.copy
             state.finalized = true
             const copy = useProxies
                 ? state.copy
                 : (state.copy = shallowCopy(base))
-            copy[TRACKER] = state.objectTracker
+            if (info && info.parents.size === 0) {
+                trackers.set(copy, state.objectTracker)
+            }
             return finalizeObject(copy, state)
         } else {
+            if (info && info.parents.size === 0) {
+                trackers.set(state.base, state.objectTracker)
+            }
+            trackers.set(state.base, state.objectTracker)
             return state.base
         }
     }
